@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<title>공포 술래잡기</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%94%A6%3C/text%3E%3C/svg%3E" />
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+
+<div id="toast" class="toast" hidden></div>
+<div id="flash-overlay" class="flash-overlay"></div>
+
+<!-- 홈: 닉네임 입력 + 방 만들기/참가 -->
+<section id="view-home" class="view">
+  <h1 class="title">🔦 공포 술래잡기</h1>
+  <p class="subtitle">불 끄고, 폰 들고, 시작하세요</p>
+
+  <div class="card">
+    <label class="field-label">닉네임</label>
+    <input id="input-name" class="field" maxlength="16" placeholder="이름을 입력하세요" autocomplete="off" />
+
+    <button id="btn-create" class="btn btn-primary">방 만들기</button>
+
+    <div class="divider">또는</div>
+
+    <input id="input-code" class="field code-input" maxlength="4" placeholder="방 코드 4자리" autocomplete="off" />
+    <button id="btn-join" class="btn btn-secondary">참가하기</button>
+  </div>
+</section>
+
+<!-- 로비 -->
+<section id="view-lobby" class="view" hidden>
+  <h2 class="room-code-label">방 코드</h2>
+  <div id="room-code" class="room-code">----</div>
+
+  <ul id="player-list" class="player-list"></ul>
+
+  <div id="host-settings" class="card" hidden>
+    <label class="field-label">게임 시간: <span id="duration-display">8분</span></label>
+    <input id="input-duration" type="range" min="3" max="20" value="8" step="1" />
+
+    <label class="field-label">마이크 민감도: <span id="sensitivity-display">1.0x</span></label>
+    <input id="input-sensitivity" type="range" min="0.3" max="3" value="1" step="0.1" />
+
+    <button id="btn-start" class="btn btn-primary" disabled>게임 시작 (최소 2명)</button>
+  </div>
+  <p id="lobby-wait-msg" class="hint">방장이 시작하기를 기다리는 중...</p>
+</section>
+
+<!-- 튜토리얼 -->
+<section id="view-tutorial" class="view" hidden>
+  <h2>🩸 시작 전에 꼭 읽어주세요</h2>
+
+  <div class="card scroll-card">
+    <p class="role-banner" id="my-role-banner">역할: -</p>
+
+    <h3>기본 규칙</h3>
+    <ul class="rules-list">
+      <li>방 불을 끄고, <b>술래는 안대를 착용</b>합니다. 술래도 폰을 들고 있어요.</li>
+      <li>도망자 폰이 마이크로 술래 폰의 소리를 듣고 <b>가까울수록 위험도가 올라가요.</b></li>
+      <li>위험도는 <b>진동과 화면 색</b>으로만 알려줘요 (소리 X - 술래가 눈치채지 못하게).</li>
+      <li>술래는 화면을 볼 수 없으니, <b>폰을 흔들면(shake)</b> "잡을 시도" 신호가 도망자들에게 전달돼요.</li>
+      <li>실제로 붙잡힌 사람은 스스로 <b>"잡혔어요" 버튼</b>을 눌러 인정해주세요 (자율 판정).</li>
+      <li>제한시간까지 살아남은 도망자가 있으면 <b>도망자 승리</b>, 전원 잡히면 <b>술래 승리</b>.</li>
+    </ul>
+
+    <h3>도망자 스킬</h3>
+    <div id="skills-explain-runner" class="skills-explain"></div>
+
+    <h3>술래 스킬</h3>
+    <div id="skills-explain-seeker" class="skills-explain"></div>
+
+    <h3>⚠️ 안전 수칙</h3>
+    <ul class="rules-list safety">
+      <li>시작 전 방 안의 부딪힐 물건, 날카로운 모서리, 계단 등을 미리 치우거나 확인하세요.</li>
+      <li>술래는 절대 뛰지 말고 천천히 걸으세요. 도망자도 급하게 뛰지 마세요.</li>
+      <li>다치거나 무서우면 언제든 "그만!"을 외쳐서 게임을 멈추세요.</li>
+      <li>화면 밝기를 너무 밝게 하지 마세요 - 빛이 새어나가면 위치가 들켜요.</li>
+    </ul>
+  </div>
+
+  <button id="btn-tutorial-ack" class="btn btn-primary">이해했어요, 준비 완료</button>
+  <p id="tutorial-wait-msg" class="hint" hidden>다른 사람을 기다리는 중...</p>
+</section>
+
+<!-- 캘리브레이션 -->
+<section id="view-calibration" class="view" hidden>
+  <div class="center-stage">
+    <div class="pulse-ring"></div>
+    <h2 id="calibration-title">주변 소음 측정 중...</h2>
+    <p class="hint">다같이 조용히 해주세요 (술래는 안대 착용!)</p>
+    <div class="progress-bar"><div id="calibration-progress" class="progress-fill"></div></div>
+  </div>
+</section>
+
+<!-- 카운트다운 -->
+<section id="view-countdown" class="view" hidden>
+  <div class="center-stage">
+    <div id="countdown-number" class="countdown-number">5</div>
+    <h2>불 끄세요! 곧 시작합니다</h2>
+  </div>
+</section>
+
+<!-- 게임 중 - 도망자 -->
+<section id="view-playing-runner" class="view" hidden>
+  <div class="hud-top">
+    <span id="runner-timer" class="timer">08:00</span>
+    <span id="runner-status" class="status-pill">생존 중</span>
+  </div>
+
+  <div class="gauge-wrap">
+    <div id="danger-gauge" class="danger-gauge">
+      <div id="danger-fill" class="danger-fill"></div>
+    </div>
+    <div id="danger-percent" class="danger-percent">0</div>
+    <div class="gauge-caption">위험도</div>
+  </div>
+
+  <div id="skill-buttons-runner" class="skill-grid"></div>
+
+  <button id="btn-caught" class="btn btn-danger">🙋 저 잡혔어요</button>
+</section>
+
+<!-- 게임 중 - 술래 -->
+<section id="view-playing-seeker" class="view" hidden>
+  <div class="center-stage">
+    <h1 class="seeker-big">👁️‍🗨️ 당신은 술래</h1>
+    <p class="hint">안대를 쓰고, 소리에 집중하세요.<br/>누군가를 잡았다면 <b>폰을 흔드세요.</b></p>
+    <span id="seeker-timer" class="timer">08:00</span>
+    <button id="btn-shriek" class="btn btn-danger">👹 괴성 (1회)</button>
+    <button id="btn-shake-manual" class="btn btn-secondary">잡기 시도 (흔들기 대체)</button>
+  </div>
+</section>
+
+<!-- 결과 -->
+<section id="view-results" class="view" hidden>
+  <div class="center-stage">
+    <h1 id="result-title" class="title">게임 종료</h1>
+    <p id="result-reason" class="hint"></p>
+    <ul id="result-list" class="player-list"></ul>
+    <button id="btn-replay" class="btn btn-primary">로비로 돌아가기</button>
+    <p id="replay-wait-msg" class="hint" hidden>방장이 다시 시작하기를 기다리는 중...</p>
+  </div>
+</section>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="/js/skills.js"></script>
+<script src="/js/audio.js"></script>
+<script src="/js/app.js"></script>
+</body>
+</html>
