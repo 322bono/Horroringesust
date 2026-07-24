@@ -6,6 +6,7 @@
   "main": "server/index.js",
   "scripts": {
     "start": "node server/index.js",
+    "start:lan": "cross-env LAN_MODE=1 node server/index.js",
     "cert": "node server/gen-cert.js"
   },
   "dependencies": {
@@ -15,5 +16,8 @@
   },
   "engines": {
     "node": ">=18"
+  },
+  "devDependencies": {
+    "cross-env": "^10.1.0"
   }
 }

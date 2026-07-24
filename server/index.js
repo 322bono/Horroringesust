@@ -1,21 +1,29 @@
-const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const http = require('http');
 const https = require('https');
 const express = require('express');
 const { Server } = require('socket.io');
 
-const { ensureCert } = require('./gen-cert');
 const { GameManager, SKILLS, MIN_PLAYERS, CALIBRATION_MS, COUNTDOWN_SEC } = require('./game');
 
+// LAN_MODE=1: 파티 당일 노트북에서 직접 실행 (같은 와이파이, 자체서명 HTTPS 필요).
+// 기본값(미설정): Render 등 클라우드 배포 - 플랫폼이 TLS를 대신 처리하므로 평범한 HTTP로 충분.
+const LAN_MODE = process.env.LAN_MODE === '1';
 const PORT = process.env.PORT || 8443;
 const gm = new GameManager();
 
 const app = express();
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
-const { key, cert } = ensureCert();
-const server = https.createServer({ key, cert }, app);
+let server;
+if (LAN_MODE) {
+  const { ensureCert } = require('./gen-cert');
+  const { key, cert } = ensureCert();
+  server = https.createServer({ key, cert }, app);
+} else {
+  server = http.createServer(app);
+}
 const io = new Server(server, { cors: { origin: '*' } });
 
 function localUrls() {
@@ -24,7 +32,7 @@ function localUrls() {
   for (const name of Object.keys(nets)) {
     for (const net of nets[name] || []) {
       if (net.family === 'IPv4' && !net.internal) {
-        urls.push(`https://${net.address}:${PORT}`);
+        urls.push(`${LAN_MODE ? 'https' : 'http'}://${net.address}:${PORT}`);
       }
     }
   }
@@ -308,14 +316,18 @@ function beginPlaying(room) {
 }
 
 server.listen(PORT, () => {
-  console.log(`\n공포 술래잡기 서버 시작!`);
-  console.log(`같은 와이파이에 연결된 폰에서 아래 주소로 접속하세요:\n`);
-  const urls = localUrls();
-  if (urls.length === 0) {
-    console.log(`  https://localhost:${PORT} (네트워크 인터페이스를 찾지 못했어요)`);
+  console.log(`\n공포 술래잡기 서버 시작! (${LAN_MODE ? 'LAN 모드' : '클라우드/프록시 모드'})`);
+  if (LAN_MODE) {
+    console.log(`같은 와이파이에 연결된 폰에서 아래 주소로 접속하세요:\n`);
+    const urls = localUrls();
+    if (urls.length === 0) {
+      console.log(`  https://localhost:${PORT} (네트워크 인터페이스를 찾지 못했어요)`);
+    } else {
+      urls.forEach(u => console.log(`  ${u}`));
+    }
+    console.log(`\n처음 접속하면 "안전하지 않음" 경고가 뜨는데, 자체 서명 인증서라서 그래요.`);
+    console.log(`(크롬: 고급 > 이동, 사파리: 자세히 보기 > 이 웹 사이트 방문) 눌러서 진행하면 됩니다.\n`);
   } else {
-    urls.forEach(u => console.log(`  ${u}`));
+    console.log(`포트 ${PORT}에서 대기 중 (플랫폼이 제공하는 공개 HTTPS 주소로 접속하세요).\n`);
   }
-  console.log(`\n처음 접속하면 "안전하지 않음" 경고가 뜨는데, 자체 서명 인증서라서 그래요.`);
-  console.log(`(크롬: 고급 > 이동, 사파리: 자세히 보기 > 이 웹 사이트 방문) 눌러서 진행하면 됩니다.\n`);
 });
