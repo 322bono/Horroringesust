@@ -34,6 +34,9 @@ html, body {
   align-items: center;
   gap: 14px;
 }
+.view[hidden] {
+  display: none;
+}
 
 .title { font-size: 1.8rem; margin: 8px 0 0; text-align: center; text-shadow: 0 0 18px var(--accent-bright); }
 .subtitle { color: var(--muted); margin: 0 0 12px; }
