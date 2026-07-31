@@ -39,19 +39,30 @@
   let isHost = false;
   let latestSettings = { durationSec: 480, sensitivity: 1.0 };
 
-  // 위험도 계산 상태
-  let noiseFloor = 0;
-  let emaRMS = 0;
+  // ---------- 위험도 계산 ----------
+  // 2점 자동 보정: ambientDb(주변 소음) = 위험도 0 기준, nearRefDb(다같이 모인 상태) = 100 기준.
+  // 폰 스피커 음량/마이크 감도/방 크기가 제각각이라 절대 임계값은 어느 환경에서도 안 맞는다.
+  // 음압은 거리에 따라 로그(dB)로 감쇠하므로 dB 구간을 선형 매핑하면 거리와 잘 대응한다.
+  // (기준점 아래 24dB ≈ 모임 거리의 16배 지점까지)
+  let ambientDb = -100;
+  let nearRefDb = -40;
+  let emaDb = -100;
   let dangerLoopHandle = null;
-  let dampenUntil = 0;
   let immuneUntilLocal = 0;
-  let freezeActiveUntil = 0;
+  let diveActiveUntil = 0;
   let lastDisplayedDanger = 0;
-  const EMA_ALPHA = 0.35;
-  const SENSITIVITY_RANGE = 0.18;
+  const EMA_ALPHA = 0.3;
+  const BASE_SPAN_DB = 24;
+  const DETECT_MARGIN_DB = 3; // 주변 소음보다 이만큼도 안 크면 아무것도 없는 것으로 간주
+
+  function computeDanger(db) {
+    if (db < ambientDb + DETECT_MARGIN_DB) return 0;
+    const span = BASE_SPAN_DB / (latestSettings.sensitivity || 1);
+    const floorDb = nearRefDb - span;
+    return Math.max(0, Math.min(100, ((db - floorDb) / span) * 100));
+  }
 
   let skillCharges = {};
-  let stopShake = null;
   let micStarted = false;
 
   // ---------- session persistence (새로고침/재접속 대비) ----------
@@ -63,6 +74,20 @@
   }
   function clearSession() {
     try { sessionStorage.removeItem('horrorTag'); } catch (e) {}
+  }
+  function saveCalibration() {
+    try { sessionStorage.setItem('horrorTagCalib', JSON.stringify({ ambientDb, nearRefDb })); } catch (e) {}
+  }
+  function loadCalibration() {
+    try {
+      const c = JSON.parse(sessionStorage.getItem('horrorTagCalib') || 'null');
+      if (c && Number.isFinite(c.ambientDb) && Number.isFinite(c.nearRefDb)) {
+        ambientDb = c.ambientDb;
+        nearRefDb = c.nearRefDb;
+        return true;
+      }
+    } catch (e) {}
+    return false;
   }
 
   // ---------- 홈 화면 ----------
@@ -151,12 +176,98 @@
     }
   });
 
+  // ---------- 로비: 감지 테스트 패널 ----------
+  // 파티 시작하고 나서 "왜 안 올라가지?" 하는 상황을 막기 위해, 미리 폰 2대로
+  // 비콘/측정을 확인하고 민감도를 조정해볼 수 있게 한다.
+  const btnToggleTest = document.getElementById('btn-toggle-test');
+  const testPanel = document.getElementById('test-panel');
+  const btnTestBeacon = document.getElementById('btn-test-beacon');
+  const btnTestMeasure = document.getElementById('btn-test-measure');
+  const testReadout = document.getElementById('test-readout');
+  const testDangerEl = document.getElementById('test-danger');
+  const testRawEl = document.getElementById('test-raw');
+  let testLoopHandle = null;
+
+  btnToggleTest.addEventListener('click', () => {
+    testPanel.hidden = !testPanel.hidden;
+    if (testPanel.hidden) stopTestPanel();
+  });
+
+  btnTestBeacon.addEventListener('click', () => {
+    if (HorrorAudio.isBeaconRunning()) {
+      HorrorAudio.stopBeacon();
+      btnTestBeacon.textContent = '🔊 비콘 켜기';
+    } else {
+      HorrorAudio.startBeacon();
+      btnTestBeacon.textContent = '⏹️ 비콘 끄기';
+    }
+  });
+
+  btnTestMeasure.addEventListener('click', async () => {
+    if (testLoopHandle) { stopTestMeasure(); return; }
+    const ok = await ensureMicStarted();
+    if (!ok) return;
+
+    btnTestMeasure.textContent = '측정 중... (기준 잡는 중)';
+    testReadout.hidden = false;
+
+    // 1.5초간 주변 소음을 재고, 그 위로 24dB를 100 기준으로 임시 매핑해서 감을 잡게 해준다
+    const warm = [];
+    const t0 = Date.now();
+    const warmIv = setInterval(() => {
+      warm.push(HorrorAudio.sampleBeaconDb());
+      if (Date.now() - t0 < 1500) return;
+      clearInterval(warmIv);
+      const floor = warm.reduce((a, b) => a + b, 0) / Math.max(1, warm.length);
+      btnTestMeasure.textContent = '⏹️ 측정 중지';
+
+      let ema = floor;
+      testLoopHandle = setInterval(() => {
+        const raw = HorrorAudio.sampleBeaconDb();
+        ema = ema * (1 - EMA_ALPHA) + raw * EMA_ALPHA;
+        const snr = ema - floor;
+        const pct = Math.max(0, Math.min(100, (snr / BASE_SPAN_DB) * 100));
+        testDangerEl.textContent = Math.round(pct);
+        testRawEl.textContent = `신호 ${snr.toFixed(1)} dB (주변 소음 대비)`;
+      }, 150);
+    }, 100);
+  });
+
+  function stopTestMeasure() {
+    clearInterval(testLoopHandle);
+    testLoopHandle = null;
+    btnTestMeasure.textContent = '📈 측정 시작';
+    testReadout.hidden = true;
+  }
+
+  function stopTestPanel() {
+    stopTestMeasure();
+    if (HorrorAudio.isBeaconRunning() && myRole !== 'seeker') {
+      HorrorAudio.stopBeacon();
+      btnTestBeacon.textContent = '🔊 비콘 켜기';
+    }
+  }
+
   // ---------- 튜토리얼 ----------
   const myRoleBanner = document.getElementById('my-role-banner');
-  const skillsExplainRunner = document.getElementById('skills-explain-runner');
-  const skillsExplainSeeker = document.getElementById('skills-explain-seeker');
+  const skillsExplainMine = document.getElementById('skills-explain-mine');
+  const skillsExplainTheirs = document.getElementById('skills-explain-theirs');
+  const tutorialControls = document.getElementById('tutorial-controls');
   const btnTutorialAck = document.getElementById('btn-tutorial-ack');
   const tutorialWaitMsg = document.getElementById('tutorial-wait-msg');
+
+  const CONTROLS_BY_ROLE = {
+    seeker: [
+      ['화면 아무 곳이나 <b>탭</b>', '누군가를 잡았을 때. 도망자 전원 폰이 진동해요.'],
+      ['화면을 <b>1.5초 꾹</b>', '👹 괴성 발동 (게임당 1회).'],
+      ['<b>진동으로 확인</b>', '짧게 한 번 = 잡기 시도됨 / 길게 = 괴성 나감. 안대 쓴 채로도 구분됩니다.']
+    ],
+    runner: [
+      ['<b>위험도 게이지</b>', '술래가 가까울수록 올라가요. 진동도 같이 빨라집니다.'],
+      ['<b>스킬 버튼</b>', '조건이 맞으면 버튼에 불이 들어와요. 안 켜져 있으면 아직 못 쓰는 것.'],
+      ['<b>"저 잡혔어요"</b>', '진짜로 붙잡혔을 때만 누르세요.']
+    ]
+  };
 
   function renderSkillExplain(container, ids) {
     container.innerHTML = ids.map(id => {
@@ -166,10 +277,19 @@
   }
 
   socket.on('phase:tutorial', async ({ role }) => {
+    stopTestPanel();
     myRole = role;
-    myRoleBanner.textContent = `역할: ${role === 'seeker' ? '👁️ 술래' : '🏃 도망자'}`;
-    renderSkillExplain(skillsExplainRunner, RUNNER_SKILL_IDS);
-    renderSkillExplain(skillsExplainSeeker, SEEKER_SKILL_IDS);
+    const isSeeker = role === 'seeker';
+    myRoleBanner.textContent = isSeeker ? '👁️ 당신은 술래' : '🏃 당신은 도망자';
+    myRoleBanner.classList.toggle('seeker', isSeeker);
+
+    tutorialControls.innerHTML = CONTROLS_BY_ROLE[role].map(([what, why]) =>
+      `<div class="control-item"><span class="what">${what}</span><span class="why">${why}</span></div>`
+    ).join('');
+
+    renderSkillExplain(skillsExplainMine, isSeeker ? SEEKER_SKILL_IDS : RUNNER_SKILL_IDS);
+    renderSkillExplain(skillsExplainTheirs, isSeeker ? RUNNER_SKILL_IDS : SEEKER_SKILL_IDS);
+
     btnTutorialAck.disabled = false;
     btnTutorialAck.textContent = '이해했어요, 준비 완료';
     tutorialWaitMsg.hidden = true;
@@ -177,9 +297,9 @@
   });
 
   btnTutorialAck.addEventListener('click', async () => {
-    // 사용자 제스처(클릭) 안에서 권한 요청을 걸어야 iOS에서 확실히 동작함
+    // 사용자 제스처(클릭) 안에서 오디오/마이크를 열어야 iOS에서 확실히 동작함
     if (myRole === 'seeker') {
-      await HorrorAudio.requestMotionPermission();
+      HorrorAudio.getCtx(); // 비콘 재생을 위한 AudioContext 잠금 해제
     } else {
       await ensureMicStarted();
     }
@@ -204,36 +324,67 @@
   // ---------- 캘리브레이션 ----------
   const calibrationProgress = document.getElementById('calibration-progress');
   const calibrationTitle = document.getElementById('calibration-title');
+  const calibrationHint = document.getElementById('calibration-hint');
+  const calibrationStepEl = document.getElementById('calibration-step');
 
-  socket.on('phase:calibration', async ({ calibrationMs }) => {
+  // 술래는 2단계 시작 신호를 받으면 비콘을 켠다 (도망자들이 "가까운 상태"를 측정할 수 있게)
+  socket.on('calibration:beaconOn', () => {
+    HorrorAudio.startBeacon();
+  });
+
+  socket.on('phase:calibration', async ({ stage, calibrationMs }) => {
     showView('calibration');
     calibrationProgress.style.width = '0%';
+    calibrationStepEl.textContent = stage === 'ambient' ? '1 / 2' : '2 / 2';
 
     if (myRole !== 'runner') {
-      calibrationTitle.textContent = '안대를 착용해주세요';
+      calibrationTitle.textContent = stage === 'ambient' ? '안대를 착용해주세요' : '기준점 측정 중...';
+      calibrationHint.textContent = stage === 'ambient'
+        ? '다같이 조용히 해주세요'
+        : '폰을 들고 다같이 모인 채로 잠시 기다리세요';
       return;
     }
 
     const ok = await ensureMicStarted();
     if (!ok) {
       calibrationTitle.textContent = '마이크 권한을 확인해주세요!';
-      // 그래도 진행은 시켜야 하니 서버엔 done 신호를 보냄 (권한 없으면 위험도 항상 0으로 표시됨)
+      calibrationHint.textContent = '권한이 없으면 위험도가 오르지 않아요';
       socket.emit('calibration:done');
       return;
     }
 
-    calibrationTitle.textContent = '주변 소음 측정 중...';
+    if (stage === 'ambient') {
+      calibrationTitle.textContent = '주변 소음 측정 중...';
+      calibrationHint.textContent = '다같이 조용히 해주세요';
+    } else {
+      calibrationTitle.textContent = '기준점 측정 중...';
+      calibrationHint.textContent = '술래 옆에 다같이 모여 있으세요! (이 거리가 위험도 100 기준)';
+    }
+
     const samples = [];
     const start = Date.now();
     const iv = setInterval(() => {
-      samples.push(HorrorAudio.sampleMicRMS());
+      samples.push(HorrorAudio.sampleBeaconDb());
       const elapsed = Date.now() - start;
       calibrationProgress.style.width = `${Math.min(100, (elapsed / calibrationMs) * 100)}%`;
-      if (elapsed >= calibrationMs) {
-        clearInterval(iv);
-        noiseFloor = samples.reduce((a, b) => a + b, 0) / Math.max(1, samples.length);
-        socket.emit('calibration:done');
+      if (elapsed < calibrationMs) return;
+
+      clearInterval(iv);
+      // 앞쪽 샘플은 비콘이 막 켜진 직후라 불안정할 수 있어 뒤쪽 60%만 사용
+      const stable = samples.slice(Math.floor(samples.length * 0.4));
+      const avg = stable.reduce((a, b) => a + b, 0) / Math.max(1, stable.length);
+
+      if (stage === 'ambient') {
+        ambientDb = avg;
+      } else {
+        nearRefDb = avg;
+        // 비콘이 주변 소음보다 확실히 크게 잡히지 않으면 볼륨 문제일 가능성이 높다
+        if (nearRefDb < ambientDb + 6) {
+          toast('⚠️ 술래 폰 소리가 잘 안 들려요! 미디어 볼륨을 최대로 올려주세요');
+        }
       }
+      saveCalibration(); // 새로고침/재접속해도 게이지 기준이 유지되도록
+      socket.emit('calibration:done');
     }, 100);
   });
 
@@ -258,8 +409,9 @@
   const dangerPercentEl = document.getElementById('danger-percent');
   const skillButtonsRunnerEl = document.getElementById('skill-buttons-runner');
   const btnCaught = document.getElementById('btn-caught');
-  const btnShriek = document.getElementById('btn-shriek');
-  const btnShakeManual = document.getElementById('btn-shake-manual');
+  const seekerTapArea = document.getElementById('seeker-tap-area');
+  const seekerSkillStatus = document.getElementById('seeker-skill-status');
+  const seekerFeedback = document.getElementById('seeker-feedback');
 
   function formatTime(sec) {
     const m = Math.max(0, Math.floor(sec / 60));
@@ -276,7 +428,7 @@
 
     if (role === 'seeker') {
       showView('playing-seeker');
-      HorrorAudio.startBeacon();
+      if (!HorrorAudio.isBeaconRunning()) HorrorAudio.startBeacon(); // 보정 2단계에서 이미 켜졌으면 유지
       initSkillState('seeker');
       wireSeekerControls();
     } else {
@@ -285,7 +437,7 @@
       runnerStatusEl.classList.remove('caught');
       initSkillState('runner');
       renderRunnerSkillButtons();
-      startDangerLoop(sensitivity);
+      startDangerLoop();
     }
   });
 
@@ -303,19 +455,15 @@
       HorrorAudio.playScream(durationMs);
       HorrorAudio.vibrate([300, 100, 300]);
       flashScreen();
-    } else if (effect === 'vibrate') {
-      HorrorAudio.vibrate([200, 100, 200]);
+      toast('💥 내 폰이 터졌다! 튀어!');
     } else if (effect === 'immunity') {
       immuneUntilLocal = Date.now() + durationMs;
-      freezeActiveUntil = immuneUntilLocal;
-      runnerStatusEl.textContent = '🫧 무적!';
-      toast('숨죽이기 활성! 8초간 잡히지 않아요');
+      diveActiveUntil = immuneUntilLocal;
+      runnerStatusEl.textContent = '🫥 잠수 중!';
+      toast(`잠수! ${Math.round(durationMs / 1000)}초간 안 잡혀요`);
       setTimeout(() => {
         if (Date.now() >= immuneUntilLocal - 50) runnerStatusEl.textContent = '생존 중';
       }, durationMs + 50);
-    } else if (effect === 'dampen') {
-      dampenUntil = Date.now() + durationMs;
-      toast('심박 안정 활성! 15초간 위험도 상승 둔화');
     }
   });
 
@@ -339,30 +487,28 @@
   });
 
   // ---- 위험도 루프 (도망자) ----
-  function startDangerLoop(sensitivity) {
-    emaRMS = noiseFloor;
+  function startDangerLoop() {
+    emaDb = ambientDb;
     lastDisplayedDanger = 0;
     clearInterval(dangerLoopHandle);
     let lastHapticAt = 0;
     dangerLoopHandle = setInterval(() => {
       const now = Date.now();
-      const raw = HorrorAudio.sampleMicRMS();
-      emaRMS = emaRMS * (1 - EMA_ALPHA) + raw * EMA_ALPHA;
-      const above = Math.max(0, emaRMS - noiseFloor);
+      const raw = HorrorAudio.sampleBeaconDb();
+      emaDb = emaDb * (1 - EMA_ALPHA) + raw * EMA_ALPHA;
 
-      let factor = latestSettings.sensitivity || sensitivity || 1;
-      if (now < dampenUntil) factor *= 0.5;
-
-      let danger = Math.min(100, (above / SENSITIVITY_RANGE) * 100 * factor);
-      if (now < immuneUntilLocal) danger = lastDisplayedDanger; // 숨죽이기 중엔 게이지 고정
+      let danger = computeDanger(emaDb);
+      if (now < immuneUntilLocal) danger = lastDisplayedDanger; // 잠수 중엔 게이지 고정
 
       lastDisplayedDanger = danger;
       renderDanger(danger);
       socket.emit('game:dangerUpdate', { danger });
       updateSkillButtonStates(danger);
 
-      if (danger >= 70 && now - lastHapticAt > 900) { HorrorAudio.vibrate(120); lastHapticAt = now; }
-      else if (danger >= 35 && now - lastHapticAt > 2500) { HorrorAudio.vibrate(60); lastHapticAt = now; }
+      // 위험할수록 진동이 잦고 강해진다 (소리는 안 냄 - 술래에게 위치가 들키니까)
+      if (danger >= 80 && now - lastHapticAt > 600) { HorrorAudio.vibrate(180); lastHapticAt = now; }
+      else if (danger >= 60 && now - lastHapticAt > 1100) { HorrorAudio.vibrate(110); lastHapticAt = now; }
+      else if (danger >= 35 && now - lastHapticAt > 2400) { HorrorAudio.vibrate(60); lastHapticAt = now; }
     }, 150);
   }
 
@@ -382,7 +528,7 @@
     const ids = role === 'seeker' ? SEEKER_SKILL_IDS : RUNNER_SKILL_IDS;
     skillCharges = {};
     ids.forEach(id => { skillCharges[id] = { left: SKILL_META[id].maxCharges, readyAt: 0 }; });
-    freezeActiveUntil = 0;
+    diveActiveUntil = 0;
   }
 
   function chargesLabel(id) {
@@ -397,7 +543,7 @@
       return `<button class="skill-btn" id="skill-${id}" disabled>
         <span class="icon">${m.icon}</span>
         <span class="name">${m.name}</span>
-        <span class="charges" id="charges-${id}">${chargesLabel(id)}</span>
+        <span class="charges" id="hint-${id}">${chargesLabel(id)}</span>
       </button>`;
     }).join('');
     RUNNER_SKILL_IDS.forEach(id => {
@@ -407,36 +553,41 @@
   }
 
   function updateSkillButtonStates(danger) {
-    const now = Date.now();
-    const frozen = now < freezeActiveUntil;
+    const diving = Date.now() < diveActiveUntil;
     RUNNER_SKILL_IDS.forEach(id => {
       const btn = document.getElementById(`skill-${id}`);
       if (!btn) return;
       const meta = SKILL_META[id];
       const st = skillCharges[id];
-      const hasCharge = st.left > 0;
-      const offCooldown = now >= st.readyAt;
-      const meetsThreshold = danger >= meta.dangerThreshold;
-      const usable = !frozen && hasCharge && offCooldown && meetsThreshold;
+      const usable = !diving && st.left > 0 && danger >= meta.dangerThreshold;
       btn.disabled = !usable;
       btn.classList.toggle('ready', usable);
+
+      // 조건 미달일 땐 "왜 못 쓰는지"를 버튼에 그대로 보여준다 (어두워서 설명을 다시 못 읽으니까)
+      const hintEl = document.getElementById(`hint-${id}`);
+      if (hintEl) {
+        if (st.left <= 0) hintEl.textContent = '소진';
+        else if (meta.dangerThreshold > 0 && danger < meta.dangerThreshold) hintEl.textContent = `위험도 ${meta.dangerThreshold}+`;
+        else hintEl.textContent = chargesLabel(id);
+      }
     });
   }
 
   function useSkill(id) {
     socket.emit('game:useSkill', { skillId: id }, (res) => {
-      if (!res.ok) return toast(res.error || '사용 실패');
-      const meta = SKILL_META[id];
+      if (!res.ok) {
+        if (myRole === 'seeker') seekerSay(res.error || '사용 실패');
+        else toast(res.error || '사용 실패');
+        return;
+      }
       const st = skillCharges[id];
       if (Number.isFinite(st.left)) st.left = Math.max(0, st.left - 1);
-      if (meta.cooldownSec) st.readyAt = Date.now() + meta.cooldownSec * 1000;
       const chargesEl = document.getElementById(`charges-${id}`);
       if (chargesEl) chargesEl.textContent = chargesLabel(id);
 
-      if (id === 'smoke') toast('💨 연막탄 사용! 다른 도망자 폰이 곧 시끄러워질 거예요');
-      if (id === 'warn') toast('📳 경고 펄스 발송!');
-      if (id === 'shriek') { btnShriek.disabled = true; toast('👹 괴성 발동!'); }
-      // freeze(숨죽이기)의 무적 지속시간은 서버가 보내는 game:playEffect(immunity)에서 설정됨
+      if (id === 'smoke') toast('💣 연막탄! 다른 놈 폰이 터집니다');
+      if (id === 'shriek') { updateSeekerSkillStatus(); seekerSay('👹 괴성 발동! 비명 방향을 들으세요'); }
+      // dive(잠수)의 무적 지속시간은 서버가 보내는 game:playEffect(immunity)에서 설정됨
     });
   }
 
@@ -448,12 +599,58 @@
   });
 
   // ---- 술래 컨트롤 ----
+  // 안대를 쓰고 있어서 화면을 볼 수 없다. 그래서 화면 전체가 하나의 버튼이고,
+  // 탭 / 길게누르기 두 동작만 있으며, 무엇이 발동됐는지는 진동 패턴으로 구분한다.
+  const LONG_PRESS_MS = 1500;
+  let pressTimer = null;
+  let longPressFired = false;
+  let seekerFeedbackTimer = null;
+
+  function seekerSay(msg) {
+    seekerFeedback.textContent = msg;
+    clearTimeout(seekerFeedbackTimer);
+    seekerFeedbackTimer = setTimeout(() => {
+      seekerFeedback.textContent = '안대 쓰고 소리에 집중하세요';
+    }, 2500);
+  }
+
+  function onSeekerPressStart(e) {
+    e.preventDefault();
+    longPressFired = false;
+    clearTimeout(pressTimer);
+    pressTimer = setTimeout(() => {
+      longPressFired = true;
+      if (skillCharges.shriek && skillCharges.shriek.left > 0) {
+        HorrorAudio.vibrate([400]); // 길게 = 괴성
+        useSkill('shriek');
+      } else {
+        HorrorAudio.vibrate([60, 60, 60]); // 짧게 3번 = 사용 불가
+        seekerSay('괴성은 이미 다 썼어요');
+      }
+    }, LONG_PRESS_MS);
+  }
+
+  function onSeekerPressEnd(e) {
+    e.preventDefault();
+    clearTimeout(pressTimer);
+    if (longPressFired) return; // 괴성이 나갔으면 탭으로 처리하지 않음
+    HorrorAudio.vibrate([50]);  // 짧게 = 잡기 시도
+    socket.emit('game:tagAttempt');
+    seekerSay('잡기 시도! 잡힌 사람이 인정하면 반영됩니다');
+  }
+
   function wireSeekerControls() {
-    if (stopShake) stopShake();
-    stopShake = HorrorAudio.onShake(() => socket.emit('game:shake'));
-    btnShriek.disabled = false;
-    btnShriek.onclick = () => useSkill('shriek');
-    btnShakeManual.onclick = () => socket.emit('game:shake');
+    seekerTapArea.onpointerdown = onSeekerPressStart;
+    seekerTapArea.onpointerup = onSeekerPressEnd;
+    seekerTapArea.onpointercancel = () => clearTimeout(pressTimer);
+    seekerTapArea.oncontextmenu = (e) => e.preventDefault(); // 길게 누를 때 메뉴 방지
+    updateSeekerSkillStatus();
+  }
+
+  function updateSeekerSkillStatus() {
+    const left = skillCharges.shriek ? skillCharges.shriek.left : 0;
+    seekerSkillStatus.textContent = left > 0 ? `👹 괴성 ${left}회 남음` : '👹 괴성 소진';
+    seekerSkillStatus.classList.toggle('spent', left <= 0);
   }
 
   // ---- 정리 ----
@@ -464,11 +661,14 @@
 
   function teardownAllLoops() {
     teardownRunnerLoop();
+    stopTestPanel();
     HorrorAudio.stopBeacon();
     HorrorAudio.stopMic();
     HorrorAudio.releaseWakeLock();
     micStarted = false;
-    if (stopShake) { stopShake(); stopShake = null; }
+    clearTimeout(pressTimer);
+    seekerTapArea.onpointerdown = null;
+    seekerTapArea.onpointerup = null;
   }
 
   // ---------- 결과 ----------
@@ -518,7 +718,8 @@
           showView('playing-runner');
           initSkillState('runner');
           renderRunnerSkillButtons();
-          ensureMicStarted().then(() => startDangerLoop(latestSettings.sensitivity));
+          if (!loadCalibration()) toast('보정값이 없어 위험도가 부정확할 수 있어요');
+          ensureMicStarted().then(() => startDangerLoop());
         }
         runnerTimerEl.textContent = formatTime(res.remainingSec);
         seekerTimerEl.textContent = formatTime(res.remainingSec);

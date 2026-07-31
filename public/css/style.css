@@ -164,7 +164,63 @@ html, body {
 .skill-btn:disabled { opacity: 0.35; }
 .skill-btn.ready { border-color: var(--accent-bright); box-shadow: 0 0 16px #ff274055; }
 
-.seeker-big { font-size: 1.6rem; }
+.seeker-big { font-size: 1.6rem; margin: 0; }
+
+/* 술래는 안대를 쓰고 있어서 화면을 볼 수 없다 -> 화면 전체가 하나의 버튼 */
+.seeker-view { padding: 0; }
+.seeker-tap-area {
+  flex: 1;
+  width: 100%;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  text-align: center;
+  padding: 24px 20px;
+  background: radial-gradient(ellipse at center, #2a0d12 0%, #0a0708 75%);
+  touch-action: none;
+  cursor: pointer;
+}
+.seeker-tap-area:active { background: radial-gradient(ellipse at center, #45141c 0%, #0a0708 75%); }
+.seeker-controls { display: flex; flex-direction: column; gap: 10px; width: 100%; max-width: 320px; }
+.seeker-control-row {
+  display: flex; justify-content: space-between; align-items: center; gap: 10px;
+  background: #1c1416cc; border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px;
+}
+.seeker-control-row span { color: var(--muted); font-size: 0.9rem; }
+.seeker-skill-status {
+  padding: 8px 18px; border-radius: 20px; background: #4d0d14;
+  border: 1px solid var(--accent-bright); font-weight: 700;
+}
+.seeker-skill-status.spent { background: #241416; border-color: var(--border); color: var(--muted); }
+.seeker-feedback { color: var(--muted); font-size: 0.9rem; min-height: 1.2em; }
+
+/* 튜토리얼 */
+.lead { line-height: 1.6; }
+.role-banner.seeker { color: #ff9d4d; }
+.controls-explain { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+.control-item {
+  background: #1c1416; border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.control-item .why { color: var(--muted); font-size: 0.85rem; }
+
+/* 보정 단계 표시 */
+.calib-step {
+  font-size: 0.8rem; color: var(--muted); letter-spacing: 0.15em;
+  border: 1px solid var(--border); border-radius: 20px; padding: 4px 14px;
+}
+
+/* 로비 감지 테스트 패널 */
+.test-readout {
+  margin-top: 14px; padding: 14px; border-radius: 12px;
+  background: #1c1416; border: 1px solid var(--border); text-align: center;
+}
+.test-danger { font-size: 2.6rem; font-weight: 800; color: var(--accent-bright); }
+.test-unit { color: var(--muted); font-size: 0.85rem; margin-left: 8px; }
+.test-raw { color: var(--muted); font-size: 0.8rem; margin-top: 6px; font-variant-numeric: tabular-nums; }
 
 .toast {
   position: fixed; top: 16px; left: 50%; transform: translateX(-50%);

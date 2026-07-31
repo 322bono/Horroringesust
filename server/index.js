@@ -126,8 +126,8 @@ io.on('connection', (socket) => {
     if (!room || !player || room.phase !== 'tutorial') return;
     const allDone = room.ackTutorial(player.id);
     if (allDone) {
-      room.startCalibration();
-      io.to(room.code).emit('phase:calibration', { calibrationMs: CALIBRATION_MS });
+      room.startCalibration('ambient');
+      io.to(room.code).emit('phase:calibration', { stage: 'ambient', calibrationMs: CALIBRATION_MS });
       broadcastRoom(room);
     }
   });
@@ -138,12 +138,25 @@ io.on('connection', (socket) => {
     if (!room || !player || room.phase !== 'calibration') return;
     if (player.role !== 'runner') return;
     const allDone = room.ackCalibration(player.id);
-    if (allDone) {
-      room.startCountdown();
-      io.to(room.code).emit('phase:countdown', { seconds: COUNTDOWN_SEC });
-      setTimeout(() => beginPlaying(room), COUNTDOWN_SEC * 1000);
+    if (!allDone) return;
+
+    if (room.calibStage === 'ambient') {
+      // 2단계: 술래 비콘을 켜고 "다같이 모인 상태"를 위험도 100 기준점으로 측정
+      room.startCalibration('near');
+      const seeker = room.seeker;
+      if (seeker) {
+        const s = socketForPlayer(room, seeker.id);
+        if (s) s.emit('calibration:beaconOn');
+      }
+      io.to(room.code).emit('phase:calibration', { stage: 'near', calibrationMs: CALIBRATION_MS });
       broadcastRoom(room);
+      return;
     }
+
+    room.startCountdown();
+    io.to(room.code).emit('phase:countdown', { seconds: COUNTDOWN_SEC });
+    setTimeout(() => beginPlaying(room), COUNTDOWN_SEC * 1000);
+    broadcastRoom(room);
   });
 
   socket.on('game:dangerUpdate', ({ danger }) => {
@@ -188,13 +201,15 @@ io.on('connection', (socket) => {
     ack({ ok: true, chargesLeft: state.chargesLeft });
   });
 
-  socket.on('game:shake', () => {
+  // 술래가 화면을 탭 = "잡았다!" 시도. 안대 때문에 화면을 볼 수 없으므로
+  // 화면 전체가 하나의 버튼이고, 도망자들에게는 진동으로만 전달된다.
+  socket.on('game:tagAttempt', () => {
     const room = roomOf(socket);
     const player = playerOf(socket);
     if (!room || !player || room.phase !== 'playing' || player.role !== 'seeker') return;
     const now = Date.now();
-    if (now - (socket.data.lastShake || 0) < 2500) return; // 연타 방지
-    socket.data.lastShake = now;
+    if (now - (socket.data.lastTagAttempt || 0) < 1500) return; // 연타 방지
+    socket.data.lastTagAttempt = now;
     for (const runner of room.alivePlayers) {
       const s = socketForPlayer(room, runner.id);
       if (s) s.emit('game:tensionPulse');
@@ -208,7 +223,7 @@ io.on('connection', (socket) => {
     if (!room || !player || room.phase !== 'playing' || player.role !== 'runner') return ack({ ok: false });
     if (!player.alive) return ack({ ok: false });
     if (Date.now() < player.immuneUntil) {
-      return ack({ ok: false, error: '숨죽이기 효과로 보호받고 있어요! 잡히지 않아요.' });
+      return ack({ ok: false, error: '잠수 중이라 안 잡혀요!' });
     }
     player.alive = false;
     ack({ ok: true });
@@ -273,18 +288,6 @@ function applySkillEffect(room, player, def) {
       player.immuneUntil = Date.now() + def.effectMs;
       const s = socketForPlayer(room, player.id);
       if (s) s.emit('game:playEffect', { effect: 'immunity', durationMs: def.effectMs });
-      return { ok: true };
-    }
-    case 'vibrateAllRunners': {
-      for (const p of room.alivePlayers) {
-        const s = socketForPlayer(room, p.id);
-        if (s) s.emit('game:playEffect', { effect: 'vibrate', durationMs: 0 });
-      }
-      return { ok: true };
-    }
-    case 'dampenSensitivity': {
-      const s = socketForPlayer(room, player.id);
-      if (s) s.emit('game:playEffect', { effect: 'dampen', durationMs: def.effectMs });
       return { ok: true };
     }
     case 'noiseOnAllRunners': {

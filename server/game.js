@@ -35,6 +35,7 @@ class Room {
     this.hostId = null; // playerId
     this.players = new Map(); // playerId -> player
     this.phase = 'lobby'; // lobby | tutorial | calibration | countdown | playing | ended
+    this.calibStage = null; // 'ambient' | 'near'
     this.settings = { durationSec: DEFAULT_DURATION_SEC, sensitivity: 1.0 };
     this.tutorialAcked = new Set();
     this.calibrationDone = new Set();
@@ -80,6 +81,7 @@ class Room {
       code: this.code,
       hostId: this.hostId,
       phase: this.phase,
+      calibStage: this.calibStage,
       settings: this.settings,
       remainingSec: this.remainingSec,
       players: this.playerList.map(p => ({
@@ -118,8 +120,14 @@ class Room {
     return this.playerList.every(p => this.tutorialAcked.has(p.id) || !p.connected);
   }
 
-  startCalibration() {
+  // 보정은 2단계로 진행한다.
+  //  ambient: 비콘 끄고 방의 기본 소음 측정 (위험도 0 기준)
+  //  near   : 술래 비콘을 켜고 다같이 모인 상태 측정 (위험도 100 기준)
+  // 폰 스피커 음량/마이크 감도/방 크기가 제각각이라 절대 임계값은 쓸 수 없고,
+  // 이 두 기준점 사이를 매핑해야 어느 환경에서든 게이지가 제대로 움직인다.
+  startCalibration(stage) {
     this.phase = 'calibration';
+    this.calibStage = stage;
     this.calibrationDone.clear();
   }
 
