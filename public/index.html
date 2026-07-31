@@ -48,6 +48,14 @@
   </div>
   <p id="lobby-wait-msg" class="hint">방장이 시작하기를 기다리는 중...</p>
 
+  <div class="card chat-card">
+    <div id="chat-log" class="chat-log"></div>
+    <div class="chat-row">
+      <input id="chat-input" class="field chat-input" maxlength="120" placeholder="메시지 입력..." autocomplete="off" />
+      <button id="chat-send" class="btn btn-secondary chat-send">전송</button>
+    </div>
+  </div>
+
   <div class="card">
     <button id="btn-toggle-test" class="btn btn-secondary">🎧 감지 테스트 (시작 전 확인용)</button>
     <div id="test-panel" hidden>
@@ -66,45 +74,29 @@
   </div>
 </section>
 
-<!-- 튜토리얼 -->
+<!-- 튜토리얼 (방장이 넘기면 전원 화면이 같이 넘어감) -->
 <section id="view-tutorial" class="view" hidden>
-  <h2>🩸 시작 전에 꼭 읽어주세요</h2>
-
-  <div class="card scroll-card">
-    <p class="role-banner" id="my-role-banner">역할: -</p>
-
-    <h3>한 줄 요약</h3>
-    <p class="lead">불 끄고 술래는 안대. <b>술래 폰이 계속 소리를 내고, 네 폰이 그 소리를 들어서
-    가까워질수록 위험도가 올라간다.</b> 위험도는 진동과 화면으로만 알려주니까 술래는 못 알아챔.</p>
-
-    <h3 id="tutorial-controls-title">조작법</h3>
-    <div id="tutorial-controls" class="controls-explain"></div>
-
-    <h3 id="tutorial-skill-title">내 스킬</h3>
-    <div id="skills-explain-mine" class="skills-explain"></div>
-
-    <h3>상대 스킬 (알고는 있어야죠)</h3>
-    <div id="skills-explain-theirs" class="skills-explain"></div>
-
-    <h3>승패</h3>
-    <ul class="rules-list">
-      <li>제한시간까지 도망자가 <b>1명이라도 살아남으면 도망자 승</b>.</li>
-      <li><b>전원 잡히면 술래 승.</b></li>
-      <li>붙잡힌 사람은 스스로 <b>"저 잡혔어요"</b>를 눌러 인정해주세요 (술래가 안대라 자율 판정).</li>
-    </ul>
-
-    <h3>⚠️ 안전 수칙</h3>
-    <ul class="rules-list safety">
-      <li>시작 전 방 안의 부딪힐 물건, 날카로운 모서리, 계단 등을 미리 치우거나 확인하세요.</li>
-      <li>술래는 절대 뛰지 말고 천천히 걸으세요. 도망자도 급하게 뛰지 마세요.</li>
-      <li>다치거나 무서우면 언제든 "그만!"을 외쳐서 게임을 멈추세요.</li>
-      <li>화면 밝기를 너무 밝게 하지 마세요 - 빛이 새어나가면 위치가 들켜요.</li>
-      <li><b>미디어 볼륨을 최대로</b> 올려주세요. 소리가 작으면 감지가 안 됩니다.</li>
-    </ul>
+  <div class="tut-top">
+    <span id="my-role-banner" class="role-banner">역할: -</span>
+    <span id="tut-ready-count" class="ready-count">0/0 준비</span>
   </div>
 
-  <button id="btn-tutorial-ack" class="btn btn-primary">이해했어요, 준비 완료</button>
-  <p id="tutorial-wait-msg" class="hint" hidden>다른 사람을 기다리는 중...</p>
+  <div class="tut-card">
+    <div id="tut-dots" class="tut-dots"></div>
+    <h2 id="tut-title" class="tut-title">-</h2>
+    <div id="tut-stage" class="tut-stage"></div>
+    <p id="tut-caption" class="tut-caption"></p>
+    <div id="tut-mine-badge" class="mine-badge" hidden>🎯 이건 <b>당신</b>이 쓰는 스킬</div>
+  </div>
+
+  <div class="tut-nav">
+    <button id="btn-tut-prev" class="btn btn-secondary" hidden>◀ 이전</button>
+    <button id="btn-tut-next" class="btn btn-secondary" hidden>다음 ▶</button>
+  </div>
+
+  <button id="btn-tutorial-ack" class="btn btn-primary">✋ 준비 완료 (한 번 눌러주세요)</button>
+  <button id="btn-tut-finish" class="btn btn-primary" hidden>게임 시작!</button>
+  <p id="tutorial-wait-msg" class="hint" hidden>방장이 넘겨줄 때까지 같이 봐요</p>
 </section>
 
 <!-- 캘리브레이션 (2단계: 주변소음 -> 다같이 모인 상태) -->
@@ -143,7 +135,7 @@
 
   <div id="skill-buttons-runner" class="skill-grid"></div>
 
-  <button id="btn-caught" class="btn btn-danger">🙋 저 잡혔어요</button>
+  <button id="btn-caught" class="btn btn-danger">🙌 항복!! (잡혔어요)</button>
 </section>
 
 <!-- 게임 중 - 술래 (안대 착용 상태라 화면 전체가 하나의 버튼) -->

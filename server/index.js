@@ -82,6 +82,7 @@ io.on('connection', (socket) => {
     socket.data.playerId = player.id;
     socket.join(room.code);
     cb({ ok: true, code: room.code, playerId: player.id });
+    socket.emit('chat:history', room.chat);
     broadcastRoom(room);
   });
 
@@ -95,6 +96,7 @@ io.on('connection', (socket) => {
     socket.data.playerId = player.id;
     socket.join(room.code);
     cb({ ok: true, code: room.code, playerId: player.id, hostId: room.hostId, phase: room.phase, role: player.role, settings: room.settings, remainingSec: room.remainingSec });
+    socket.emit('chat:history', room.chat);
     broadcastRoom(room);
   });
 
@@ -107,6 +109,18 @@ io.on('connection', (socket) => {
     broadcastRoom(room);
   });
 
+  socket.on('chat:send', ({ text }) => {
+    const room = roomOf(socket);
+    const player = playerOf(socket);
+    if (!room || !player) return;
+    const clean = String(text || '').trim();
+    if (!clean) return;
+    const now = Date.now();
+    if (now - (socket.data.lastChatAt || 0) < 400) return; // 도배 방지
+    socket.data.lastChatAt = now;
+    io.to(room.code).emit('chat:msg', room.addChat(player, clean));
+  });
+
   socket.on('lobby:start', () => {
     const room = roomOf(socket);
     const player = playerOf(socket);
@@ -115,21 +129,39 @@ io.on('connection', (socket) => {
     room.startTutorial();
     for (const p of room.playerList) {
       const s = socketForPlayer(room, p.id);
-      if (s) s.emit('phase:tutorial', { role: p.role, skills: skillsFor(p.role) });
+      if (s) s.emit('phase:tutorial', { role: p.role, slide: 0 });
     }
+    broadcastTutorial(room);
     broadcastRoom(room);
   });
 
+  // 방장이 슬라이드를 넘기면 전원 화면이 같이 넘어간다 (다같이 보면서 설명하는 용도)
+  socket.on('tutorial:goto', ({ index, slideCount }) => {
+    const room = roomOf(socket);
+    const player = playerOf(socket);
+    if (!room || !player || room.hostId !== player.id || room.phase !== 'tutorial') return;
+    if (!Number.isFinite(index) || !Number.isFinite(slideCount) || slideCount <= 0) return;
+    room.setTutorialSlide(index, slideCount);
+    broadcastTutorial(room);
+  });
+
+  // 각자 한 번은 화면을 눌러야 한다 (iOS는 사용자 제스처가 있어야 마이크/오디오가 열림)
   socket.on('tutorial:ack', () => {
     const room = roomOf(socket);
     const player = playerOf(socket);
     if (!room || !player || room.phase !== 'tutorial') return;
-    const allDone = room.ackTutorial(player.id);
-    if (allDone) {
-      room.startCalibration('ambient');
-      io.to(room.code).emit('phase:calibration', { stage: 'ambient', calibrationMs: CALIBRATION_MS });
-      broadcastRoom(room);
-    }
+    room.ackTutorial(player.id);
+    broadcastTutorial(room);
+  });
+
+  socket.on('tutorial:finish', () => {
+    const room = roomOf(socket);
+    const player = playerOf(socket);
+    if (!room || !player || room.hostId !== player.id || room.phase !== 'tutorial') return;
+    if (!room.allReady()) return;
+    room.startCalibration('ambient');
+    io.to(room.code).emit('phase:calibration', { stage: 'ambient', calibrationMs: CALIBRATION_MS });
+    broadcastRoom(room);
   });
 
   socket.on('calibration:done', () => {
@@ -192,6 +224,9 @@ io.on('connection', (socket) => {
     if (def.dangerThreshold && player.lastDanger < def.dangerThreshold) {
       return ack({ ok: false, error: `위험도 ${def.dangerThreshold} 이상일 때 사용 가능해요.` });
     }
+    if (def.dangerMax != null && player.lastDanger > def.dangerMax) {
+      return ack({ ok: false, error: `위험도 ${def.dangerMax} 이하일 때만 쓸 수 있어요. 지금은 너무 가까워요!` });
+    }
 
     const result = applySkillEffect(room, player, def);
     if (!result.ok) return ack(result);
@@ -222,9 +257,7 @@ io.on('connection', (socket) => {
     const player = playerOf(socket);
     if (!room || !player || room.phase !== 'playing' || player.role !== 'runner') return ack({ ok: false });
     if (!player.alive) return ack({ ok: false });
-    if (Date.now() < player.immuneUntil) {
-      return ack({ ok: false, error: '잠수 중이라 안 잡혀요!' });
-    }
+    // 항복은 무엇으로도 막을 수 없다. 붙잡힌 본인이 인정하면 그대로 탈락.
     player.alive = false;
     ack({ ok: true });
     io.to(room.code).emit('game:playerCaught', { playerId: player.id, name: player.name });
@@ -248,7 +281,6 @@ io.on('connection', (socket) => {
     for (const p of room.playerList) {
       p.role = null;
       p.alive = true;
-      p.immuneUntil = 0;
       p.lastDanger = 0;
       p.skills = {};
     }
@@ -266,8 +298,14 @@ io.on('connection', (socket) => {
   });
 });
 
-function skillsFor(role) {
-  return Object.values(SKILLS).filter(s => s.role === role);
+function broadcastTutorial(room) {
+  io.to(room.code).emit('tutorial:state', {
+    slide: room.tutorialSlide,
+    readyCount: room.readyCount,
+    total: room.playerList.filter(p => p.connected).length,
+    allReady: room.allReady(),
+    readyIds: [...room.tutorialAcked]
+  });
 }
 
 function resultPlayers(room) {
@@ -284,10 +322,11 @@ function applySkillEffect(room, player, def) {
       if (s) s.emit('game:playEffect', { effect: 'noise', durationMs: def.effectMs });
       return { ok: true };
     }
-    case 'tagImmunity': {
-      player.immuneUntil = Date.now() + def.effectMs;
-      const s = socketForPlayer(room, player.id);
-      if (s) s.emit('game:playEffect', { effect: 'immunity', durationMs: def.effectMs });
+    case 'noiseOnSeeker': {
+      const seeker = room.seeker;
+      if (!seeker) return { ok: false, error: '술래가 없어요.' };
+      const s = socketForPlayer(room, seeker.id);
+      if (s) s.emit('game:playEffect', { effect: 'noise', durationMs: def.effectMs });
       return { ok: true };
     }
     case 'noiseOnAllRunners': {

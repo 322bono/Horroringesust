@@ -38,7 +38,9 @@ class Room {
     this.calibStage = null; // 'ambient' | 'near'
     this.settings = { durationSec: DEFAULT_DURATION_SEC, sensitivity: 1.0 };
     this.tutorialAcked = new Set();
+    this.tutorialSlide = 0; // 방장이 넘기면 전원 화면이 같이 넘어간다
     this.calibrationDone = new Set();
+    this.chat = []; // 로비 채팅 기록 (늦게 들어온 사람도 볼 수 있게 최근 것만 보관)
     this.remainingSec = 0;
     this._interval = null;
     this.createdAt = Date.now();
@@ -55,7 +57,6 @@ class Room {
       connected: true,
       role: null,
       alive: true,
-      immuneUntil: 0,
       lastDanger: 0,
       skills: {}
     };
@@ -104,7 +105,6 @@ class Room {
     players.forEach((p, i) => {
       p.role = i === seekerIdx ? 'seeker' : 'runner';
       p.alive = true;
-      p.immuneUntil = 0;
       p.lastDanger = 0;
       p.skills = freshSkillState(p.role);
     });
@@ -113,11 +113,37 @@ class Room {
   startTutorial() {
     this.phase = 'tutorial';
     this.tutorialAcked.clear();
+    this.tutorialSlide = 0;
   }
 
   ackTutorial(playerId) {
     this.tutorialAcked.add(playerId);
+  }
+
+  get readyCount() {
+    return this.playerList.filter(p => this.tutorialAcked.has(p.id)).length;
+  }
+
+  allReady() {
     return this.playerList.every(p => this.tutorialAcked.has(p.id) || !p.connected);
+  }
+
+  setTutorialSlide(index, slideCount) {
+    this.tutorialSlide = Math.max(0, Math.min(slideCount - 1, index));
+    return this.tutorialSlide;
+  }
+
+  addChat(player, text) {
+    const msg = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      playerId: player.id,
+      name: player.name,
+      text: String(text).slice(0, 120),
+      ts: Date.now()
+    };
+    this.chat.push(msg);
+    if (this.chat.length > 60) this.chat.shift();
+    return msg;
   }
 
   // 보정은 2단계로 진행한다.

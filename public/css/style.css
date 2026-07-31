@@ -197,15 +197,6 @@ html, body {
 .seeker-skill-status.spent { background: #241416; border-color: var(--border); color: var(--muted); }
 .seeker-feedback { color: var(--muted); font-size: 0.9rem; min-height: 1.2em; }
 
-/* 튜토리얼 */
-.lead { line-height: 1.6; }
-.role-banner.seeker { color: #ff9d4d; }
-.controls-explain { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
-.control-item {
-  background: #1c1416; border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px;
-  display: flex; flex-direction: column; gap: 4px;
-}
-.control-item .why { color: var(--muted); font-size: 0.85rem; }
 
 /* 보정 단계 표시 */
 .calib-step {
@@ -237,3 +228,138 @@ html, body {
 @media (min-width: 480px) {
   .view { padding-top: 40px; }
 }
+
+
+/* ========== 튜토리얼: 다같이 넘겨보는 이모지 애니메이션 슬라이드 ========== */
+.tut-top {
+  width: 100%; max-width: 460px; display: flex; justify-content: space-between; align-items: center; gap: 10px;
+}
+.role-banner {
+  font-weight: 700; color: var(--accent-bright); font-size: 1rem;
+  background: #1c1416; border: 1px solid var(--border); border-radius: 20px; padding: 6px 14px;
+}
+.role-banner.seeker { color: #ff9d4d; border-color: #6b3a1a; }
+.ready-count {
+  font-size: 0.85rem; color: var(--muted);
+  background: #1c1416; border: 1px solid var(--border); border-radius: 20px; padding: 6px 12px;
+}
+.ready-count.all { color: var(--safe); border-color: #1e6b3c; }
+
+.tut-card {
+  width: 100%; max-width: 460px; flex: 1;
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 16px;
+  padding: 18px; display: flex; flex-direction: column; align-items: center; gap: 14px;
+  justify-content: center; /* 슬라이드 내용이 카드 중앙에 오도록 */
+}
+.tut-dots { display: flex; gap: 6px; }
+.tut-dots .dot { width: 7px; height: 7px; border-radius: 50%; background: #3a2226; }
+.tut-dots .dot.on { background: var(--accent-bright); box-shadow: 0 0 8px var(--accent-bright); }
+.tut-title { margin: 0; font-size: 1.3rem; text-align: center; }
+.tut-caption { margin: 0; text-align: center; line-height: 1.65; font-size: 0.95rem; }
+.mine-badge {
+  background: #4d0d14; border: 1px solid var(--accent-bright); border-radius: 20px;
+  padding: 6px 14px; font-size: 0.85rem; font-weight: 700;
+}
+.tut-nav { width: 100%; max-width: 460px; display: flex; gap: 10px; }
+.tut-nav .btn { margin-top: 0; }
+
+/* 슬라이드 무대 */
+.tut-stage {
+  width: 100%; min-height: 150px;
+  display: flex; align-items: center; justify-content: center;
+  background: #120c0e; border: 1px solid var(--border); border-radius: 12px;
+  overflow: hidden;
+}
+.stage {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  position: relative; width: 100%; height: 150px;
+}
+.stage-track { gap: 4px; }
+.emo { font-size: 2.2rem; line-height: 1; }
+.emo.big { font-size: 3rem; }
+.emo.arrow { font-size: 1.1rem; color: var(--muted); font-weight: 700; }
+
+/* 개별 애니메이션 (각 슬라이드가 개념 하나씩 보여줌) */
+@keyframes bulbOut { 0%,35% { opacity: 1; } 45%,100% { opacity: 0; } }
+.a-bulb { animation: bulbOut 3s infinite; position: absolute; }
+@keyframes darkIn { 0%,35% { opacity: 0; transform: scale(0.5); } 55%,100% { opacity: 1; transform: scale(1); } }
+.a-dark { animation: darkIn 3s infinite; }
+
+@keyframes shakeIt { 0%,100% { transform: rotate(-8deg); } 50% { transform: rotate(8deg); } }
+.a-shake { animation: shakeIt 0.9s ease-in-out infinite; }
+
+@keyframes scatter1 { 0%,100% { transform: translate(0,0); } 50% { transform: translate(-14px,-10px); } }
+@keyframes scatter2 { 0%,100% { transform: translate(0,0); } 50% { transform: translate(6px,12px); } }
+@keyframes scatter3 { 0%,100% { transform: translate(0,0); } 50% { transform: translate(16px,-8px); } }
+.a-scatter1 { animation: scatter1 2s ease-in-out infinite; }
+.a-scatter2 { animation: scatter2 2.3s ease-in-out infinite; }
+.a-scatter3 { animation: scatter3 1.8s ease-in-out infinite; }
+
+/* 위험도 슬라이드: 술래가 다가오면 게이지가 찬다 */
+@keyframes approach { 0% { transform: translateX(-90px); } 100% { transform: translateX(-6px); } }
+.a-approach { animation: approach 3s ease-in infinite; }
+.mini-gauge {
+  position: absolute; bottom: 22px; left: 50%; transform: translateX(-50%);
+  width: 160px; height: 12px; background: #241416; border-radius: 6px; overflow: hidden;
+}
+@keyframes fillUp {
+  0% { width: 4%; background: var(--safe); }
+  55% { width: 45%; background: var(--warn); }
+  100% { width: 100%; background: var(--danger); }
+}
+.mini-gauge-fill { height: 100%; width: 4%; }
+.a-fill { animation: fillUp 3s ease-in infinite; }
+@keyframes buzz { 0%,60% { opacity: 0.15; transform: scale(1); } 80% { opacity: 1; transform: scale(1.3); } 100% { opacity: 0.15; transform: scale(1); } }
+.a-buzz { animation: buzz 3s infinite; position: absolute; top: 18px; right: 26px; }
+
+/* 스킬 슬라이드: 뭔가 날아가서 상대 폰이 터진다 */
+@keyframes flyOver { 0% { transform: translateX(-40px) scale(0.7); opacity: 0; } 30% { opacity: 1; } 60% { transform: translateX(40px) scale(1.1); opacity: 1; } 70%,100% { opacity: 0; } }
+.a-fly { animation: flyOver 2.6s ease-in-out infinite; }
+@keyframes boom { 0%,58% { transform: scale(1); } 66% { transform: scale(1.45) rotate(-10deg); } 74% { transform: scale(1.2) rotate(8deg); } 100% { transform: scale(1); } }
+.a-boom { animation: boom 2.6s infinite; }
+@keyframes screamOut { 0%,60% { opacity: 0; transform: scale(0.4); } 72% { opacity: 1; transform: scale(1.3); } 100% { opacity: 0; transform: scale(1.7); } }
+.a-scream { animation: screamOut 2.6s infinite; position: absolute; top: 26px; right: 34px; }
+
+/* 괴성: 사방으로 퍼지는 충격파 */
+@keyframes pulseBig { 0%,100% { transform: scale(1); } 30% { transform: scale(1.25); } }
+.a-pulse { animation: pulseBig 2s infinite; position: absolute; }
+@keyframes shockOut { 0% { opacity: 0; transform: translate(0,0) scale(0.3); } 25% { opacity: 1; } 100% { opacity: 0; transform: translate(var(--dx), var(--dy)) scale(1.2); } }
+.a-shock1 { --dx: -80px; --dy: -34px; animation: shockOut 2s infinite; position: absolute; }
+.a-shock2 { --dx: 80px; --dy: -20px; animation: shockOut 2s infinite 0.15s; position: absolute; }
+.a-shock3 { --dx: 10px; --dy: 46px; animation: shockOut 2s infinite 0.3s; position: absolute; }
+
+/* 항복 슬라이드 */
+@keyframes grabIn { 0% { transform: translateX(-50px); } 45%,100% { transform: translateX(-8px); } }
+.a-grab { animation: grabIn 3s ease-in infinite; }
+@keyframes caughtShake { 0%,40% { transform: translateX(0); } 50% { transform: translateX(6px) rotate(6deg); } 60% { transform: translateX(-4px) rotate(-6deg); } 70%,100% { transform: translateX(0) rotate(0); opacity: 0.45; } }
+.a-caught { animation: caughtShake 3s infinite; }
+@keyframes surrenderUp { 0%,55% { opacity: 0; transform: translateY(14px) scale(0.6); } 70% { opacity: 1; transform: translateY(-10px) scale(1.3); } 100% { opacity: 0; transform: translateY(-24px) scale(1); } }
+.a-surrender { animation: surrenderUp 3s infinite; position: absolute; top: 24px; right: 60px; }
+
+/* 순차 등장 */
+@keyframes popIn { 0%,10% { opacity: 0; transform: scale(0.4); } 25% { opacity: 1; transform: scale(1.2); } 35%,100% { opacity: 1; transform: scale(1); } }
+.a-pop1 { animation: popIn 2.6s infinite; }
+.a-pop2 { animation: popIn 2.6s infinite 0.3s; }
+.a-pop3 { animation: popIn 2.6s infinite 0.6s; }
+
+@media (prefers-reduced-motion: reduce) {
+  .tut-stage * { animation: none !important; }
+}
+
+/* ========== 로비 채팅 ========== */
+.chat-card { display: flex; flex-direction: column; gap: 10px; }
+.chat-log {
+  height: 150px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px;
+  background: #120c0e; border: 1px solid var(--border); border-radius: 10px; padding: 10px;
+}
+.chat-log:empty::before {
+  content: "게임 시작 전에 떠들어보세요 💬";
+  color: var(--muted); font-size: 0.85rem; margin: auto;
+}
+.chat-msg { display: flex; gap: 8px; align-items: baseline; font-size: 0.9rem; line-height: 1.4; }
+.chat-msg .chat-name { color: var(--accent-bright); font-weight: 700; flex-shrink: 0; }
+.chat-msg.mine .chat-name { color: var(--safe); }
+.chat-msg .chat-text { word-break: break-word; }
+.chat-row { display: flex; gap: 8px; }
+.chat-input { flex: 1; text-align: left; padding: 12px; font-size: 0.95rem; }
+.chat-send { width: auto; margin-top: 0; padding: 12px 18px; flex-shrink: 0; }

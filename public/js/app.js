@@ -48,8 +48,6 @@
   let nearRefDb = -40;
   let emaDb = -100;
   let dangerLoopHandle = null;
-  let immuneUntilLocal = 0;
-  let diveActiveUntil = 0;
   let lastDisplayedDanger = 0;
   const EMA_ALPHA = 0.3;
   const BASE_SPAN_DB = 24;
@@ -176,6 +174,38 @@
     }
   });
 
+  // ---------- 로비: 채팅 ----------
+  const chatLog = document.getElementById('chat-log');
+  const chatInput = document.getElementById('chat-input');
+  const chatSend = document.getElementById('chat-send');
+
+  function appendChat(msg) {
+    const mine = msg.playerId === myPlayerId;
+    const li = document.createElement('div');
+    li.className = 'chat-msg' + (mine ? ' mine' : '');
+    li.innerHTML = `<span class="chat-name">${escapeHtml(msg.name)}</span><span class="chat-text">${escapeHtml(msg.text)}</span>`;
+    chatLog.appendChild(li);
+    chatLog.scrollTop = chatLog.scrollHeight;
+  }
+
+  function sendChat() {
+    const text = chatInput.value.trim();
+    if (!text) return;
+    socket.emit('chat:send', { text });
+    chatInput.value = '';
+  }
+
+  chatSend.addEventListener('click', sendChat);
+  chatInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); sendChat(); }
+  });
+
+  socket.on('chat:history', (msgs) => {
+    chatLog.innerHTML = '';
+    (msgs || []).forEach(appendChat);
+  });
+  socket.on('chat:msg', appendChat);
+
   // ---------- 로비: 감지 테스트 패널 ----------
   // 파티 시작하고 나서 "왜 안 올라가지?" 하는 상황을 막기 위해, 미리 폰 2대로
   // 비콘/측정을 확인하고 민감도를 조정해볼 수 있게 한다.
@@ -248,52 +278,86 @@
     }
   }
 
-  // ---------- 튜토리얼 ----------
+  // ---------- 튜토리얼 (방장이 넘기면 전원 화면이 같이 넘어감) ----------
   const myRoleBanner = document.getElementById('my-role-banner');
-  const skillsExplainMine = document.getElementById('skills-explain-mine');
-  const skillsExplainTheirs = document.getElementById('skills-explain-theirs');
-  const tutorialControls = document.getElementById('tutorial-controls');
+  const tutTitle = document.getElementById('tut-title');
+  const tutStage = document.getElementById('tut-stage');
+  const tutCaption = document.getElementById('tut-caption');
+  const tutDots = document.getElementById('tut-dots');
+  const tutMineBadge = document.getElementById('tut-mine-badge');
+  const tutReadyCount = document.getElementById('tut-ready-count');
+  const btnTutPrev = document.getElementById('btn-tut-prev');
+  const btnTutNext = document.getElementById('btn-tut-next');
+  const btnTutFinish = document.getElementById('btn-tut-finish');
   const btnTutorialAck = document.getElementById('btn-tutorial-ack');
   const tutorialWaitMsg = document.getElementById('tutorial-wait-msg');
 
-  const CONTROLS_BY_ROLE = {
-    seeker: [
-      ['화면 아무 곳이나 <b>탭</b>', '누군가를 잡았을 때. 도망자 전원 폰이 진동해요.'],
-      ['화면을 <b>1.5초 꾹</b>', '👹 괴성 발동 (게임당 1회).'],
-      ['<b>진동으로 확인</b>', '짧게 한 번 = 잡기 시도됨 / 길게 = 괴성 나감. 안대 쓴 채로도 구분됩니다.']
-    ],
-    runner: [
-      ['<b>위험도 게이지</b>', '술래가 가까울수록 올라가요. 진동도 같이 빨라집니다.'],
-      ['<b>스킬 버튼</b>', '조건이 맞으면 버튼에 불이 들어와요. 안 켜져 있으면 아직 못 쓰는 것.'],
-      ['<b>"저 잡혔어요"</b>', '진짜로 붙잡혔을 때만 누르세요.']
-    ]
-  };
+  let currentSlide = 0;
+  let iAmReady = false;
 
-  function renderSkillExplain(container, ids) {
-    container.innerHTML = ids.map(id => {
-      const m = SKILL_META[id];
-      return `<div class="skill-explain-item"><span class="name">${m.icon} ${m.name} <span class="tag">(${m.shortDesc})</span></span><div class="desc">${m.desc}</div></div>`;
-    }).join('');
+  function renderSlide(index) {
+    currentSlide = Math.max(0, Math.min(TUTORIAL_SLIDES.length - 1, index));
+    const slide = TUTORIAL_SLIDES[currentSlide];
+
+    tutTitle.textContent = slide.title;
+    tutCaption.innerHTML = slide.caption;
+    // 애니메이션을 매번 처음부터 재생시키려면 노드를 새로 넣어야 한다
+    tutStage.innerHTML = slide.stage;
+
+    tutMineBadge.hidden = !(slide.skillFor && slide.skillFor === myRole);
+
+    tutDots.innerHTML = TUTORIAL_SLIDES
+      .map((_, i) => `<span class="dot${i === currentSlide ? ' on' : ''}"></span>`).join('');
+
+    btnTutPrev.hidden = !isHost || currentSlide === 0;
+    btnTutNext.hidden = !isHost || currentSlide === TUTORIAL_SLIDES.length - 1;
+    updateFinishButton();
   }
 
-  socket.on('phase:tutorial', async ({ role }) => {
+  function updateFinishButton() {
+    const onLastSlide = currentSlide === TUTORIAL_SLIDES.length - 1;
+    btnTutFinish.hidden = !(isHost && onLastSlide);
+    btnTutFinish.disabled = !lastTutorialState.allReady;
+    btnTutFinish.textContent = lastTutorialState.allReady
+      ? '게임 시작!'
+      : `게임 시작 (${lastTutorialState.readyCount}/${lastTutorialState.total} 준비됨)`;
+  }
+
+  let lastTutorialState = { readyCount: 0, total: 0, allReady: false };
+
+  btnTutPrev.addEventListener('click', () =>
+    socket.emit('tutorial:goto', { index: currentSlide - 1, slideCount: TUTORIAL_SLIDES.length }));
+  btnTutNext.addEventListener('click', () =>
+    socket.emit('tutorial:goto', { index: currentSlide + 1, slideCount: TUTORIAL_SLIDES.length }));
+  btnTutFinish.addEventListener('click', () => socket.emit('tutorial:finish'));
+
+  socket.on('phase:tutorial', ({ role }) => {
     stopTestPanel();
     myRole = role;
+    iAmReady = false;
     const isSeeker = role === 'seeker';
-    myRoleBanner.textContent = isSeeker ? '👁️ 당신은 술래' : '🏃 당신은 도망자';
+    myRoleBanner.textContent = isSeeker ? '🙈 당신은 술래' : '🧍 당신은 도망자';
     myRoleBanner.classList.toggle('seeker', isSeeker);
 
-    tutorialControls.innerHTML = CONTROLS_BY_ROLE[role].map(([what, why]) =>
-      `<div class="control-item"><span class="what">${what}</span><span class="why">${why}</span></div>`
-    ).join('');
-
-    renderSkillExplain(skillsExplainMine, isSeeker ? SEEKER_SKILL_IDS : RUNNER_SKILL_IDS);
-    renderSkillExplain(skillsExplainTheirs, isSeeker ? RUNNER_SKILL_IDS : SEEKER_SKILL_IDS);
-
+    btnTutorialAck.hidden = false;
     btnTutorialAck.disabled = false;
-    btnTutorialAck.textContent = '이해했어요, 준비 완료';
+    btnTutorialAck.textContent = '✋ 준비 완료 (한 번 눌러주세요)';
     tutorialWaitMsg.hidden = true;
+    renderSlide(0);
     showView('tutorial');
+  });
+
+  socket.on('tutorial:state', ({ slide, readyCount, total, allReady, readyIds }) => {
+    lastTutorialState = { readyCount, total, allReady };
+    tutReadyCount.textContent = `${readyCount}/${total} 준비`;
+    tutReadyCount.classList.toggle('all', allReady);
+    iAmReady = Array.isArray(readyIds) && readyIds.includes(myPlayerId);
+    if (iAmReady) {
+      btnTutorialAck.hidden = true;
+      tutorialWaitMsg.hidden = isHost;
+    }
+    if (slide !== currentSlide) renderSlide(slide);
+    else updateFinishButton();
   });
 
   btnTutorialAck.addEventListener('click', async () => {
@@ -305,7 +369,6 @@
     }
     btnTutorialAck.disabled = true;
     btnTutorialAck.textContent = '준비 완료!';
-    tutorialWaitMsg.hidden = false;
     socket.emit('tutorial:ack');
   });
 
@@ -456,14 +519,6 @@
       HorrorAudio.vibrate([300, 100, 300]);
       flashScreen();
       toast('💥 내 폰이 터졌다! 튀어!');
-    } else if (effect === 'immunity') {
-      immuneUntilLocal = Date.now() + durationMs;
-      diveActiveUntil = immuneUntilLocal;
-      runnerStatusEl.textContent = '🫥 잠수 중!';
-      toast(`잠수! ${Math.round(durationMs / 1000)}초간 안 잡혀요`);
-      setTimeout(() => {
-        if (Date.now() >= immuneUntilLocal - 50) runnerStatusEl.textContent = '생존 중';
-      }, durationMs + 50);
     }
   });
 
@@ -473,11 +528,11 @@
 
   socket.on('game:playerCaught', ({ playerId, name }) => {
     if (playerId === myPlayerId) {
-      runnerStatusEl.textContent = '😵 잡힘';
+      runnerStatusEl.textContent = '🙌 항복 (탈락)';
       runnerStatusEl.classList.add('caught');
       teardownRunnerLoop();
     } else {
-      toast(`${name}님이 잡혔어요!`);
+      toast(`🙌 ${name}님 항복! (탈락)`);
     }
   });
 
@@ -497,9 +552,7 @@
       const raw = HorrorAudio.sampleBeaconDb();
       emaDb = emaDb * (1 - EMA_ALPHA) + raw * EMA_ALPHA;
 
-      let danger = computeDanger(emaDb);
-      if (now < immuneUntilLocal) danger = lastDisplayedDanger; // 잠수 중엔 게이지 고정
-
+      const danger = computeDanger(emaDb);
       lastDisplayedDanger = danger;
       renderDanger(danger);
       socket.emit('game:dangerUpdate', { danger });
@@ -528,7 +581,6 @@
     const ids = role === 'seeker' ? SEEKER_SKILL_IDS : RUNNER_SKILL_IDS;
     skillCharges = {};
     ids.forEach(id => { skillCharges[id] = { left: SKILL_META[id].maxCharges, readyAt: 0 }; });
-    diveActiveUntil = 0;
   }
 
   function chargesLabel(id) {
@@ -553,13 +605,13 @@
   }
 
   function updateSkillButtonStates(danger) {
-    const diving = Date.now() < diveActiveUntil;
     RUNNER_SKILL_IDS.forEach(id => {
       const btn = document.getElementById(`skill-${id}`);
       if (!btn) return;
       const meta = SKILL_META[id];
       const st = skillCharges[id];
-      const usable = !diving && st.left > 0 && danger >= meta.dangerThreshold;
+      const inRange = danger >= meta.dangerThreshold && (meta.dangerMax == null || danger <= meta.dangerMax);
+      const usable = st.left > 0 && inRange;
       btn.disabled = !usable;
       btn.classList.toggle('ready', usable);
 
@@ -567,7 +619,8 @@
       const hintEl = document.getElementById(`hint-${id}`);
       if (hintEl) {
         if (st.left <= 0) hintEl.textContent = '소진';
-        else if (meta.dangerThreshold > 0 && danger < meta.dangerThreshold) hintEl.textContent = `위험도 ${meta.dangerThreshold}+`;
+        else if (meta.dangerThreshold > 0 && danger < meta.dangerThreshold) hintEl.textContent = `위험도 ${meta.dangerThreshold}+ 필요`;
+        else if (meta.dangerMax != null && danger > meta.dangerMax) hintEl.textContent = `너무 가까움 (${meta.dangerMax} 이하)`;
         else hintEl.textContent = chargesLabel(id);
       }
     });
@@ -586,12 +639,12 @@
       if (chargesEl) chargesEl.textContent = chargesLabel(id);
 
       if (id === 'smoke') toast('💣 연막탄! 다른 놈 폰이 터집니다');
+      if (id === 'ghost') toast('👻 귀신소리! 술래 폰이 비명 지릅니다');
       if (id === 'shriek') { updateSeekerSkillStatus(); seekerSay('👹 괴성 발동! 비명 방향을 들으세요'); }
-      // dive(잠수)의 무적 지속시간은 서버가 보내는 game:playEffect(immunity)에서 설정됨
     });
   }
 
-  // ---- 도망자: 잡힘 확인 ----
+  // ---- 도망자: 항복(자율 탈락) ----
   btnCaught.addEventListener('click', () => {
     socket.emit('game:confirmCaught', {}, (res) => {
       if (res && res.ok === false && res.error) toast(res.error);
@@ -684,7 +737,7 @@
     resultListEl.innerHTML = '';
     (players || []).forEach(p => {
       const li = document.createElement('li');
-      const roleLabel = p.role === 'seeker' ? '👁️ 술래' : (p.alive ? '🏃 생존' : '😵 잡힘');
+      const roleLabel = p.role === 'seeker' ? '🙈 술래' : (p.alive ? '🧍 생존' : '🙌 항복');
       li.innerHTML = `<span>${escapeHtml(p.name)}</span><span class="tag">${roleLabel}</span>`;
       resultListEl.appendChild(li);
     });
